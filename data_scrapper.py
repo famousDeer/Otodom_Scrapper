@@ -2,6 +2,8 @@ import logging
 import re
 import requests
 import sqlite3
+import concurrent.futures
+import time
 
 from bs4 import BeautifulSoup
 from geopy.geocoders import Nominatim
@@ -14,7 +16,7 @@ def setup_logger(name="app_logger"):
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
-    log_format = logging.Formatter(fmt='%(asctime)s [%(levelname)s] %(message)s',
+    log_format = logging.Formatter(fmt='%(threadName)s %(asctime)s [%(levelname)s] %(message)s',
                                    datefmt='%Y-%m-%d')
 
     # Console handler
@@ -32,6 +34,7 @@ def setup_logger(name="app_logger"):
 
 class OtodomScraper:
     def __init__(self):
+        self.logger = setup_logger(__name__)
         self.user_input = input("Write the city name: ")
         self.city_name, self.city_district, self.vojevodian = self.__get_place_details(self.user_input)
         self.city_name = self.__convert_to_ascii(self.city_name)
@@ -58,11 +61,9 @@ class OtodomScraper:
             "Accept-Language": "pl,en-US;q=0.7,en;q=0.3",
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1"
-        }
-        self.logger = setup_logger(__name__)
-    
+        }    
             
-    def __clean_numeric_data(self, string: str) -> float | int | None:
+    def __clean_numeric_data(self, string: str) -> Union[float,int,None]:
         '''
         Function clean numeric data from the preffix and suffix.
         --------------------------------
@@ -130,7 +131,7 @@ class OtodomScraper:
                 conn.close()
                 self.logger.info("Database connection closed.")
 
-    def __insert_data(self, data: Dict[str, Union[str, int, float]]):
+    def __insert_data(self, data: List[Dict[str, Union[str, int, float]]]) -> None:
         '''
         Insert data into the database.
         --------------------------------
@@ -139,17 +140,18 @@ class OtodomScraper:
         '''
         conn = None
         try:
+            self.logger.info("Inserting data into the database.")
             conn = sqlite3.connect('otodom.db')
             cursor = conn.cursor()
             cursor.execute(f'''
-                           INSERT INTO "{self.city_name}" 
-                           (title, address, link, rooms, surface, price_per_meter, total_price, rent_price) 
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                           ''', (data['title'], data['address'], data['link'], data['rooms'], data['surface'], 
-                                 data['price_per_meter'], data['total_price'], data['rent_price']))
+                        INSERT INTO "{self.city_name}" 
+                        (title, address, link, rooms, surface, price_per_meter, total_price, rent_price) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (data['title'], data['address'], data['link'], data['rooms'], data['surface'], 
+                                data['price_per_meter'], data['total_price'], data['rent_price']))
             conn.commit()
         except sqlite3.IntegrityError:
-            self.logger.info(f"Skipping duplicate entry: {data['title']}")
+            self.logger.warning(f"Skipping duplicate entry: {data['title']}")
         except sqlite3.Error as e:
             self.logger.error(f"Database error when inserting:'{data}' into table '{self.city_name}': {e}")
         finally:
@@ -208,6 +210,11 @@ class OtodomScraper:
                     self.logger.info(f"Requesting URL: {response.url}")
                     if response.status_code == 200:
                         return response.text
+            elif response.status_code == 403:
+                self.logger.error("Access forbidden (403). Check your headers or IP restrictions.")
+                time.sleep(300)
+                self.get_pageContent(url if url else None)
+                return None
             else:
                 self.logger.error(f"Failed to fetch data: HTTP {response.status_code}")
                 return None
@@ -217,7 +224,7 @@ class OtodomScraper:
 
     def parse_data(self) -> Union[int, None]:
         '''
-        Scrapes property listings data from Otodom website and saves it to the database.
+        Scrapes property listings data from Otodom website using multiple threads.
         --------------------------------
         Returns:
             int: Total number of successfully scraped items
@@ -236,13 +243,16 @@ class OtodomScraper:
             self.logger.error("Failed to determine total page count")
             return None
 
-        for page in range(1, self.page):
+        def process_page(page: int) -> List[Dict]:
+            """Process a single page and return extracted data"""
+            page_data = []
             self.logger.info(f"Processing page {page}/{self.page-1}")
             self.params["page"] = page
             html_content = self.get_pageContent()
+            
             if not html_content:
                 self.logger.error(f"Failed to fetch page {page}, skipping")
-                continue
+                return page_data
 
             soup = BeautifulSoup(html_content, 'html.parser')
             articles = soup.find_all('article', {'data-cy': 'listing-item'})
@@ -251,19 +261,30 @@ class OtodomScraper:
                 try:
                     entry = self._extract_property_data(article)
                     if entry:
-                        all_data.append(entry)
-                        self.totalitems += 1
+                        page_data.append(entry)
                 except Exception as e:
-                    self.logger.error(f"Failed to process listing: {str(e)}")
+                    self.logger.error(f"Failed to process listing on page {page}: {str(e)}")
                     continue
+            
+            return page_data
+
+        # Use ThreadPoolExecutor for parallel processing
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_page = {executor.submit(process_page, page): page 
+                             for page in range(1, self.page)}
+            
+            for future in concurrent.futures.as_completed(future_to_page):
+                page_data = future.result()
+                all_data.extend(page_data)
+                self.totalitems += len(page_data)
         if all_data:
-            try:
-                self.__create_database()
-                for data in all_data:
+            self.__create_database()
+            for data in all_data:
+                try:
                     self.__insert_data(data)
-            except Exception as e:
-                self.logger.error(f"Database operation failed: {str(e)}")
-                return None
+                except Exception as e:
+                    self.logger.error(f"Database operation failed: {str(e)}")
+                    return None
 
         return self.totalitems
 
@@ -358,7 +379,7 @@ class OtodomScraper:
                 conn.close()
         return total_flats
     
-    def get_rent_price(self, link: str) -> Union[int, float]: # TODO -> Comment funtion, clear names and secure from errors, save to logging
+    def get_rent_price(self, link: str) -> Union[int, float]:
         '''
         Function to get the rent price if exists.
         --------------------------------

@@ -15,7 +15,8 @@ def load_data():
     cursor = conn.cursor()
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
     tables_names = cursor.fetchall()
-    cities = {idx: city for idx, tup in enumerate(tables_names[1:], start=1) for city in tup }
+    tables_names = [tup[0] for tup in tables_names if tup[0] not in ['sqlite_sequence', 'sqlite_stat1']]
+    cities = {idx: city for idx, city in enumerate(tables_names, start=1)}
     for key, value in cities.items():
         print(key, ". ", value, sep="")
     try:
@@ -35,7 +36,6 @@ def remove_street(street):
 def get_price_per_address(df):
     df['rent_price'] = df['rent_price'].replace(0, np.nan)
     
-    # Define custom aggregation functions
     def cv(x):
         return (x.std() / x.mean()) * 100 if x.mean() != 0 else np.nan
     
@@ -74,17 +74,14 @@ def get_price_per_address(df):
 def print_statistics(df):
     print("\n=== Detailed Statistics ===")
     print(f"\nTotal number of apartments: {len(df)}")
-    
     print(df)
 
 def plot_price_per_meter_per_localization(df):
-    # Sort by mean price_per_meter
     mean_prices = df[('price_per_meter', 'mean')].sort_values(ascending=False)
     ax = sns.barplot(x=mean_prices.values, y=mean_prices.index)
     plt.xlabel('Cena za metr kwadratowy [zł]')
     plt.ylabel('Lokalizacja')
     plt.title('Lokalizacji po średniej cenie za metr kwadratowy')
-    # Annotate each bar with the price value
     for i, v in enumerate(mean_prices.values):
         ax.text(v, i, f"{v:,.0f} zł", color='black', va='center', fontweight='bold')
     plt.tight_layout()
@@ -151,17 +148,15 @@ def plot_price_per_meter_by_rooms(df):
     plt.show()
 
 def show_address_col(df):
-    # Display all records
-    pd.set_option('display.max_rows', None)  # Show all rows
-    pd.set_option('display.max_columns', None)  # Show all columns
-    pd.set_option('display.width', None)  # Auto-detect display width
+    pd.set_option('display.max_rows', None) 
+    pd.set_option('display.max_columns', None) 
+    pd.set_option('display.width', None)
     df = df.groupby('address').count()
     print("\n=== All Records ===")
     print(df)
 
 def plot_price_per_meter_boxplot(df):
     plt.figure(figsize=(12, 8))
-    # Create boxplot using the new statistics
     data_to_plot = []
     labels = []
     for address in df.index:
@@ -190,7 +185,6 @@ def plot_coefficient_of_variation(df):
     plt.ylabel('Lokalizacja')
     plt.title('Współczynnik zmienności ceny za metr kwadratowy według lokalizacji')
     
-    # Add value labels
     for i, v in enumerate(cv_values.values):
         ax.text(v, i, f"{v:.1f}%", color='black', va='center', fontweight='bold')
     
@@ -200,7 +194,6 @@ def plot_coefficient_of_variation(df):
 def plot_price_range(df):
     plt.figure(figsize=(12, 8))
     
-    # Calculate price ranges (q75 - q25)
     price_ranges = df[('price_per_meter', 'q75')] - df[('price_per_meter', 'q25')]
     price_ranges = price_ranges.sort_values(ascending=False)
     
@@ -209,7 +202,6 @@ def plot_price_range(df):
     plt.ylabel('Lokalizacja')
     plt.title('Rozstęp międzykwartylowy ceny za metr kwadratowy według lokalizacji')
     
-    # Add value labels
     for i, v in enumerate(price_ranges.values):
         ax.text(v, i, f"{v:.0f} zł", color='black', va='center', fontweight='bold')
     
@@ -219,7 +211,6 @@ def plot_price_range(df):
 if __name__ == "__main__":
     df = load_data()
     df['address'] = df['address'].apply(remove_street)
-    # show_address_col(df)
     plot_surface_distribution(df)
     plot_price_per_meter_distribution(df)
     plot_surface_vs_total_price(df)
@@ -229,7 +220,6 @@ if __name__ == "__main__":
     df = get_price_per_address(df)
     plot_price_per_meter_per_localization(df)
     plot_rent_per_localization(df)
-    # Add new visualizations
     plot_price_per_meter_boxplot(df)
     plot_coefficient_of_variation(df)
     plot_price_range(df)
