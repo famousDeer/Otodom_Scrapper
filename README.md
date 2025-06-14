@@ -42,6 +42,7 @@ python data_scrapper.py
 ```
 - Enter the city name when prompted
 - The script will collect data for apartments between 50-100m²
+- If there is a lot of apartments Otodom will block scrapper for around 5 min. In this case program will wait 5 min and try again. It is using multithreading to speed up :).
 - Data is saved to a SQLite database (otodom.db)
 - Log file will also be provide as well with terminal information logging
 
@@ -85,7 +86,7 @@ The collected data includes:
 - Surface area
 - Price per square meter
 - Total price
-- Rent price (if available)
+- Rent price (if available, if not it is 0)
 
 ## Error Handling
 
