@@ -1,4 +1,5 @@
 import logging
+import os
 import re
 import requests
 import sqlite3
@@ -12,36 +13,19 @@ from math import ceil
 from unidecode import unidecode
 from typing import Optional, List, Dict, Union, Tuple
 
-def setup_logger(name="app_logger"):
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
-
-    log_format = logging.Formatter(fmt='%(threadName)s %(asctime)s [%(levelname)s] %(message)s',
-                                   datefmt='%Y-%m-%d')
-
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(log_format)
-
-    # File handler with rotation (max 5MB, 3 backups)
-    file_handler = RotatingFileHandler("app.log", maxBytes=5*1024*1024, backupCount=3)
-    file_handler.setFormatter(log_format)
-
-    logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
-
-    return logger
-
 class OtodomScraper:
-    def __init__(self):
+    def __init__(self, 
+                 min_area, 
+                 max_area, 
+                 setup_logger: Optional[logging.Logger] = None):
         self.logger = setup_logger(__name__)
         self.user_input = input("Write the city name: ")
         self.city_name, self.city_district, self.vojevodian = self.__get_place_details(self.user_input)
         self.city_name = self.__convert_to_ascii(self.city_name)
         self.city_district = self.__convert_to_ascii(self.city_district)
         self.vojevodian = self.__convert_to_ascii(self.vojevodian)
-        self.min_area = 50
-        self.max_area = 100
+        self.min_area = min_area
+        self.max_area = max_area
         self.page = 1
         self.base_url = "https://www.otodom.pl/pl/wyniki/sprzedaz/mieszkanie/" + self.vojevodian + "/" + self.city_district + ("/" + self.city_name)*2
         self.params = {
@@ -101,7 +85,7 @@ class OtodomScraper:
         conn = None
         try:
             self.city_name = re.sub(r'\W+', '_', self.city_name)
-            conn = sqlite3.connect('otodom.db')
+            conn = sqlite3.connect('databases/otodom.db')
             cursor = conn.cursor()
             
             self.logger.info(f"Creating table for city: {self.city_name}")
@@ -141,7 +125,7 @@ class OtodomScraper:
         conn = None
         try:
             self.logger.info("Inserting data into the database.")
-            conn = sqlite3.connect('otodom.db')
+            conn = sqlite3.connect('databases/otodom.db')
             cursor = conn.cursor()
             cursor.execute(f'''
                         INSERT INTO "{self.city_name}" 
@@ -211,7 +195,7 @@ class OtodomScraper:
                     if response.status_code == 200:
                         return response.text
             elif response.status_code == 403:
-                self.logger.error("Access forbidden (403). Check your headers or IP restrictions.")
+                self.logger.error("Access forbidden (403). Check your headers or IP restrictions. Waiting 5 minutes before retrying...")
                 time.sleep(300)
                 self.get_pageContent(url if url else None)
                 return None
@@ -363,7 +347,7 @@ class OtodomScraper:
         '''
         conn = None
         try:
-            conn = sqlite3.connect('otodom.db')
+            conn = sqlite3.connect('databases/otodom.db')
             cursor = conn.cursor()
             cursor.execute(f'SELECT COUNT(*) FROM "{self.city_name}"')
             total_flats = cursor.fetchone()[0]
@@ -396,12 +380,3 @@ class OtodomScraper:
         value = self.__clean_numeric_data(first_item.text.split(":")[1])
         return value if value is not None else 0
     
-if __name__ == "__main__":
-    otodom = OtodomScraper()
-    result = otodom.parse_data()
-    logger = setup_logger()
-    if result:
-        logger.info(f"Scraping completed successfully. Total flats found: {result}")
-        logger.info(f"Total flats in database: {otodom.get_total_flats()}")
-    else:
-        logger.error("Scraping failed")
