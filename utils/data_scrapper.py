@@ -1,16 +1,17 @@
 import logging
-import os
 import re
 import requests
 import sqlite3
 import concurrent.futures
 import time
+import os
 
 from bs4 import BeautifulSoup
 from geopy.geocoders import Nominatim
 from logging.handlers import RotatingFileHandler
 from math import ceil
 from unidecode import unidecode
+from pathlib import Path
 from typing import Optional, List, Dict, Union, Tuple
 
 class OtodomScraper:
@@ -46,7 +47,8 @@ class OtodomScraper:
             "Accept-Language": "pl,en-US;q=0.7,en;q=0.3",
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1"
-        }    
+        }
+        self.BASE_DIR = Path(__file__).resolve().parent.parent
             
     def __clean_numeric_data(self, string: str) -> Union[float,int,None]:
         '''
@@ -87,7 +89,8 @@ class OtodomScraper:
         conn = None
         try:
             self.city_name = re.sub(r'\W+', '_', self.city_name)
-            conn = sqlite3.connect('databases/otodom.db')
+            os.makedirs(str(self.BASE_DIR) + '/databases', exist_ok=True)
+            conn = sqlite3.connect(str(self.BASE_DIR) + '/databases/otodom.db')
             cursor = conn.cursor()
             
             self.logger.info(f"Creating table for city: {self.city_name}")
@@ -144,7 +147,7 @@ class OtodomScraper:
         conn = None
         try:
             self.logger.info("Inserting data into the database (relational structure).")
-            conn = sqlite3.connect('databases/otodom.db')
+            conn = sqlite3.connect(str(self.BASE_DIR) + '/databases/otodom.db')
             cursor = conn.cursor()
             cursor.execute('INSERT OR IGNORE INTO cities (name) VALUES (?)', (self.city_name,))
             cursor.execute('SELECT id FROM cities WHERE name = ?', (self.city_name,))
@@ -401,7 +404,7 @@ class OtodomScraper:
         '''
         conn = None
         try:
-            conn = sqlite3.connect('databases/otodom.db')
+            conn = sqlite3.connect(str(self.BASE_DIR) + '/databases/otodom.db')
             cursor = conn.cursor()
             cursor.execute('SELECT id FROM cities WHERE name = ?', (self.city_name,))
             city_row = cursor.fetchone()
