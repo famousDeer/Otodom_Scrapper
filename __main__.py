@@ -30,6 +30,7 @@ def setup_logger(name="app_logger"):
 def main():
     parser = argparse.ArgumentParser(description="Run the Otodom data scraper and analysis tool.")
     parser.add_argument('--scrape', action='store_true', help="Run the web scraper to collect data from Otodom.")
+    parser.add_argument('city', type=str, help="City name to scrape data for.")
     parser.add_argument('--minarea', type=int, default=0, help="Minimum area in meters for filtering properties.")
     parser.add_argument('--maxarea', type=int, default=1000, help="Maximum area in meters for filtering properties.")
     parser.add_argument('--visualize', action='store_true', help="Visualize the data collected from Otodom.")
@@ -37,7 +38,7 @@ def main():
     parser.add_argument('--darkmode', action='store_true', help="Use dark mode for visualizations.")
     args = parser.parse_args()
     if args.scrape:
-        scraper = OtodomScraper(min_area=args.minarea, max_area=args.maxarea, setup_logger=setup_logger)
+        scraper = OtodomScraper(min_area=args.minarea, max_area=args.maxarea, setup_logger=setup_logger, city=args.city)
         data = scraper.parse_data()
         if data:
             logger.info(f"Scraping completed successfully. Total flats found: {data}")
