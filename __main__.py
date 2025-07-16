@@ -4,6 +4,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from utils.data_scrapper import OtodomScraper
 from utils.visualize_data import Visualization
+from utils.save_to_csv import save_to_csv
 from time import gmtime, strftime
 
 def setup_logger(name="app_logger"):
@@ -46,6 +47,8 @@ def main():
     if args.visualize:
         visualizer = Visualization(dark_mode=args.darkmode, min_area=args.minarea, max_area=args.maxarea)
         visualizer.visualize()
+    if args.save:
+        save_to_csv()
 
 if __name__ == "__main__":
     logger = setup_logger()

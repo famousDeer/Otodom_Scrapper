@@ -60,6 +60,7 @@ class OtodomScraper:
             Float | Int | None
         '''
         string = string.replace(',', '.')
+        string = string.split("zł")[0]
         digit_str = re.sub(r'[^\d+.]', '', string)
         if digit_str:
             return float(digit_str) if '.' in digit_str else int(digit_str)
@@ -90,19 +91,36 @@ class OtodomScraper:
             
             self.logger.info(f"Creating table for city: {self.city_name}")
 
+            # Create table for city if it does not exist
             cursor.execute(f'''
-                        CREATE TABLE IF NOT EXISTS "{self.city_name}" (
+                        CREATE TABLE IF NOT EXISTS cities (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        title TEXT UNIQUE,
+                        name TEXT UNIQUE)''')
+            # CREATE table for scrape date if it does not exist
+            cursor.execute('''
+                        CREATE TABLE IF NOT EXISTS scrapes (
+                           id INTEGER PRIMARY KEY AUTOINCREMENT,
+                           city_id INTEGER,
+                           scrape_date TEXT,
+                           FOREIGN KEY(city_id) REFERENCES cities(id))''')
+            # Create table for flats if it does not exist
+            cursor.execute(f'''
+                        CREATE TABLE IF NOT EXISTS flats (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        scrape_id INTEGER,
+                        title TEXT,
                         address TEXT,
                         link TEXT,
                         rooms TEXT,
                         surface FLOAT,
                         price_per_meter FLOAT,
                         total_price INTEGER,
-                        rent_price INTEGER
+                        rent_price INTEGER,
+                        FOREIGN KEY(scrape_id) REFERENCES scrapes(id) ON DELETE CASCADE
                         )
                         ''')
+            # Dodaj unikalny indeks na link
+            cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_flats_link ON flats(link)')
             conn.commit()
             self.logger.info(f"Table '{self.city_name}' created or already exists.")
 
@@ -117,27 +135,43 @@ class OtodomScraper:
 
     def __insert_data(self, data: List[Dict[str, Union[str, int, float]]]) -> None:
         '''
-        Insert data into the database.
+        Insert data into the database using relational structure.
         --------------------------------
         Args:
-            data: The data to insert.
+            data: List of dictionaries with flat data.
         '''
         conn = None
         try:
-            self.logger.info("Inserting data into the database.")
+            self.logger.info("Inserting data into the database (relational structure).")
             conn = sqlite3.connect('databases/otodom.db')
             cursor = conn.cursor()
-            cursor.execute(f'''
-                        INSERT INTO "{self.city_name}" 
-                        (title, address, link, rooms, surface, price_per_meter, total_price, rent_price) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (data['title'], data['address'], data['link'], data['rooms'], data['surface'], 
-                                data['price_per_meter'], data['total_price'], data['rent_price']))
+            cursor.execute('INSERT OR IGNORE INTO cities (name) VALUES (?)', (self.city_name,))
+            cursor.execute('SELECT id FROM cities WHERE name = ?', (self.city_name,))
+            city_id = cursor.fetchone()[0]
+
+            scrape_date = time.strftime('%Y-%m-%d')
+            cursor.execute('INSERT INTO scrapes (city_id, scrape_date) VALUES (?, ?)', (city_id, scrape_date))
+            scrape_id = cursor.lastrowid
+
+            for flat in data:
+                cursor.execute('''
+                    INSERT OR IGNORE INTO flats (scrape_id, title, address, link, rooms, surface, price_per_meter, total_price, rent_price)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    scrape_id,
+                    flat.get('title', ''),
+                    flat.get('address', ''),
+                    flat.get('link', ''),
+                    flat.get('rooms', ''),
+                    flat.get('surface', 0),
+                    flat.get('price_per_meter', 0),
+                    flat.get('total_price', 0),
+                    flat.get('rent_price', 0)
+                ))
             conn.commit()
-        except sqlite3.IntegrityError:
-            self.logger.warning(f"Skipping duplicate entry: {data['title']}")
+            self.logger.info(f"Inserted {len(data)} flats for city '{self.city_name}' and date {scrape_date}.")
         except sqlite3.Error as e:
-            self.logger.error(f"Database error when inserting:'{data}' into table '{self.city_name}': {e}")
+            self.logger.error(f"Database error when inserting scrape data: {e}")
         finally:
             if conn:
                 self.logger.info("Database connection closed.")
@@ -239,7 +273,7 @@ class OtodomScraper:
                 return page_data
 
             soup = BeautifulSoup(html_content, 'html.parser')
-            articles = soup.find_all('article', {'data-cy': 'listing-item'})
+            articles = soup.find_all('article', {'data-sentry-component': 'AdvertCard'})
             
             for article in articles:
                 try:
@@ -263,12 +297,7 @@ class OtodomScraper:
                 self.totalitems += len(page_data)
         if all_data:
             self.__create_database()
-            for data in all_data:
-                try:
-                    self.__insert_data(data)
-                except Exception as e:
-                    self.logger.error(f"Database operation failed: {str(e)}")
-                    return None
+            self.__insert_data(all_data)
 
         return self.totalitems
 
@@ -284,21 +313,43 @@ class OtodomScraper:
             None: If extraction fails
         '''
         try:
-            price_text = article.find_next("span", {'data-sentry-component': 'Price'})
+            price_text = article.find_next("div", {'data-sentry-component': 'Price'})
             if not price_text:
+                self.logger.error("Missing price_text in property extraction")
                 return None
-                
-            link = price_text.find_next('a', {'data-cy': 'listing-item-link'})
+            
+            price_per_meter_text = price_text.find_next('span', {'class': 'css-13du2ho'})
+            if not price_per_meter_text:
+                self.logger.error("Missing price_per_meter_text in property extraction")
+                return None
+            
+            link = price_per_meter_text.find_next('a', {'data-cy': 'listing-item-link'})
             if not link:
+                self.logger.error("Missing link in property extraction")
                 return None
-                
-            title = link.find_next('p', {'data-cy': 'listing-item-title'})
-            address = title.find_next('p', {'data-sentry-component': 'Address'})
-            rooms = address.find_next('dd', {'data-sentry-component': 'RoomsDefinition'})
-            surface = rooms.find_next('dd')
-            price_per_meter_text = surface.find_next('dd', {'data-sentry-component': 'PricePerMeterDefinition'})
 
-            if not all([title, address, rooms, surface, price_per_meter_text]):
+            title = link.find_next('p', {'data-cy': 'listing-item-title'})
+            if not title:
+                self.logger.error("Missing title in property extraction")
+                return None
+
+            address = title.find_next('p', {'data-sentry-component': 'Address'})
+            if not address:
+                self.logger.error("Missing address in property extraction")
+                return None
+            rooms_dd = address.find_next('dd', {'class': 'css-17je0kd'})
+            if not rooms_dd:
+                self.logger.error("Missing rooms dd in property extraction")
+                return None
+            rooms_span = rooms_dd.find('span')
+            if not rooms_span:
+                self.logger.error("Missing rooms span in property extraction")
+                return None
+            rooms = rooms_span
+
+            surface = rooms.find_next('dd')
+            if not surface:
+                self.logger.error("Missing surface in property extraction")
                 return None
 
             full_url = 'https://www.otodom.pl' + link['href']
@@ -313,7 +364,9 @@ class OtodomScraper:
                 'rent_price': self.get_rent_price(full_url)
             }
         except (AttributeError, KeyError, ValueError) as e:
-            self.logger.error(f"Property data extraction failed: {str(e)}")
+            import traceback
+            tb = traceback.format_exc()
+            self.logger.error(f"Property data extraction failed: {str(e)}\nTraceback:\n{tb}")
             return None
 
     def get_page_number(self, soup: BeautifulSoup) -> Union[int, None]:
@@ -340,22 +393,33 @@ class OtodomScraper:
 
     def get_total_flats(self) -> int:
         '''
-        Function to get the total number of flats in DB.
+        Function to get the total number of flats in DB for the current city.
         --------------------------------
         Returns:
-            int: The total number of flats in the database.
+            int: The total number of flats in the database for the current city.
         '''
         conn = None
         try:
             conn = sqlite3.connect('databases/otodom.db')
             cursor = conn.cursor()
-            cursor.execute(f'SELECT COUNT(*) FROM "{self.city_name}"')
+            cursor.execute('SELECT id FROM cities WHERE name = ?', (self.city_name,))
+            city_row = cursor.fetchone()
+            if not city_row:
+                self.logger.warning(f"No city found with name '{self.city_name}' in database.")
+                return 0
+            city_id = city_row[0]
+            cursor.execute('''
+                SELECT COUNT(*)
+                FROM flats f
+                JOIN scrapes s ON f.scrape_id = s.id
+                WHERE s.city_id = ?
+            ''', (city_id,))
             total_flats = cursor.fetchone()[0]
         except sqlite3.Error as e:
-            self.logger.error(f"Database error when counting flats in table '{self.city_name}': {e}")
+            self.logger.error(f"Database error when counting flats for city '{self.city_name}': {e}")
             return 0
         except Exception as e:
-            self.logger.exception(f"Unexpected error when counting flats in table '{self.city_name}': {e}")
+            self.logger.exception(f"Unexpected error when counting flats for city '{self.city_name}': {e}")
             return 0
         finally:
             if conn:
@@ -379,4 +443,3 @@ class OtodomScraper:
             first_item = first_item.find_next("div", {"data-sentry-element": "ItemGridContainer", "data-sentry-source-file": "AdDetailItem.tsx"})
         value = self.__clean_numeric_data(first_item.text.split(":")[1])
         return value if value is not None else 0
-    
