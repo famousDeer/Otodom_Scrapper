@@ -1,17 +1,15 @@
 import logging
 import re
 import requests
-import sqlite3
+import psycopg2
 import concurrent.futures
 import time
-import os
 
 from bs4 import BeautifulSoup
 from geopy.geocoders import Nominatim
 from logging.handlers import RotatingFileHandler
 from math import ceil
 from unidecode import unidecode
-from pathlib import Path
 from typing import Optional, List, Dict, Union, Tuple
 
 class OtodomScraper:
@@ -48,7 +46,6 @@ class OtodomScraper:
             "Connection": "keep-alive",
             "Upgrade-Insecure-Requests": "1"
         }
-        self.BASE_DIR = Path(__file__).resolve().parent.parent
             
     def __clean_numeric_data(self, string: str) -> Union[float,int,None]:
         '''
@@ -89,46 +86,51 @@ class OtodomScraper:
         conn = None
         try:
             self.city_name = re.sub(r'\W+', '_', self.city_name)
-            os.makedirs(str(self.BASE_DIR) + '/databases', exist_ok=True)
-            conn = sqlite3.connect(str(self.BASE_DIR) + '/databases/otodom.db')
+            conn = psycopg2.connect(
+                dbname="otodom_db",
+                user="scraper_user",
+                password="1234",
+                host="localhost"
+            )
             cursor = conn.cursor()
             
             self.logger.info(f"Creating table for city: {self.city_name}")
 
-            # Create table for city if it does not exist
-            cursor.execute(f'''
-                        CREATE TABLE IF NOT EXISTS cities (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        name TEXT UNIQUE)''')
-            # CREATE table for scrape date if it does not exist
+            # Wykonaj komendy SQL
             cursor.execute('''
-                        CREATE TABLE IF NOT EXISTS scrapes (
-                           id INTEGER PRIMARY KEY AUTOINCREMENT,
-                           city_id INTEGER,
-                           scrape_date TEXT,
-                           FOREIGN KEY(city_id) REFERENCES cities(id))''')
-            # Create table for flats if it does not exist
-            cursor.execute(f'''
-                        CREATE TABLE IF NOT EXISTS flats (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        scrape_id INTEGER,
-                        title TEXT,
-                        address TEXT,
-                        link TEXT,
-                        rooms TEXT,
-                        surface FLOAT,
-                        price_per_meter FLOAT,
-                        total_price INTEGER,
-                        rent_price INTEGER,
-                        FOREIGN KEY(scrape_id) REFERENCES scrapes(id) ON DELETE CASCADE
-                        )
-                        ''')
-            # Dodaj unikalny indeks na link
+                CREATE TABLE IF NOT EXISTS cities (
+                    id SERIAL PRIMARY KEY,
+                    name VARCHAR(100) UNIQUE
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS scrapes (
+                    id SERIAL PRIMARY KEY,
+                    city_id INTEGER,
+                    scrape_date TEXT,
+                    FOREIGN KEY (city_id) REFERENCES cities(id)
+                )
+            ''')
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS flats (
+                    id SERIAL PRIMARY KEY,
+                    scrape_id INTEGER,
+                    title TEXT,
+                    address TEXT,
+                    link TEXT,
+                    rooms TEXT,
+                    surface FLOAT,
+                    price_per_meter FLOAT,
+                    total_price INTEGER,
+                    rent_price INTEGER,
+                    FOREIGN KEY (scrape_id) REFERENCES scrapes(id) ON DELETE CASCADE
+                )
+            ''')
             cursor.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_flats_link ON flats(link)')
             conn.commit()
             self.logger.info(f"Table '{self.city_name}' created or already exists.")
 
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             self.logger.error(f"Database error when creating table '{self.city_name}': {e}")
         except Exception as e:
             self.logger.exception(f"Unexpected error when creating table '{self.city_name}': {e}")
@@ -147,20 +149,30 @@ class OtodomScraper:
         conn = None
         try:
             self.logger.info("Inserting data into the database (relational structure).")
-            conn = sqlite3.connect(str(self.BASE_DIR) + '/databases/otodom.db')
+            conn = psycopg2.connect(
+                dbname="otodom_db",
+                user="scraper_user",
+                password="1234",
+                host="localhost"
+            )
             cursor = conn.cursor()
-            cursor.execute('INSERT OR IGNORE INTO cities (name) VALUES (?)', (self.city_name,))
-            cursor.execute('SELECT id FROM cities WHERE name = ?', (self.city_name,))
+
+            # Wstawienie miasta, jeśli nie istnieje
+            cursor.execute('INSERT INTO cities (name) VALUES (%s) ON CONFLICT (name) DO NOTHING', (self.city_name,))
+            cursor.execute('SELECT id FROM cities WHERE name = %s', (self.city_name,))
             city_id = cursor.fetchone()[0]
 
+            # Wstawienie rekordu scrapowania
             scrape_date = time.strftime('%Y-%m-%d')
-            cursor.execute('INSERT INTO scrapes (city_id, scrape_date) VALUES (?, ?)', (city_id, scrape_date))
-            scrape_id = cursor.lastrowid
+            cursor.execute('INSERT INTO scrapes (city_id, scrape_date) VALUES (%s, %s) RETURNING id', (city_id, scrape_date))
+            scrape_id = cursor.fetchone()[0]
 
+            # Wstawienie mieszkań
             for flat in data:
                 cursor.execute('''
-                    INSERT OR IGNORE INTO flats (scrape_id, title, address, link, rooms, surface, price_per_meter, total_price, rent_price)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO flats (scrape_id, title, address, link, rooms, surface, price_per_meter, total_price, rent_price)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (link) DO NOTHING
                 ''', (
                     scrape_id,
                     flat.get('title', ''),
@@ -174,7 +186,7 @@ class OtodomScraper:
                 ))
             conn.commit()
             self.logger.info(f"Inserted {len(data)} flats for city '{self.city_name}' and date {scrape_date}.")
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             self.logger.error(f"Database error when inserting scrape data: {e}")
         finally:
             if conn:
@@ -404,22 +416,33 @@ class OtodomScraper:
         '''
         conn = None
         try:
-            conn = sqlite3.connect(str(self.BASE_DIR) + '/databases/otodom.db')
+            conn = psycopg2.connect(
+                dbname="otodom_db",
+                user="scraper_user",
+                password="1234",
+                host="localhost"
+            )
             cursor = conn.cursor()
-            cursor.execute('SELECT id FROM cities WHERE name = ?', (self.city_name,))
+
+            # Pobranie ID miasta
+            cursor.execute('SELECT id FROM cities WHERE name = %s', (self.city_name,))
             city_row = cursor.fetchone()
             if not city_row:
                 self.logger.warning(f"No city found with name '{self.city_name}' in database.")
+                cursor.close()
+                conn.close()
                 return 0
             city_id = city_row[0]
+
+            # Zliczenie mieszkań dla danego miasta
             cursor.execute('''
                 SELECT COUNT(*)
                 FROM flats f
                 JOIN scrapes s ON f.scrape_id = s.id
-                WHERE s.city_id = ?
+                WHERE s.city_id = %s
             ''', (city_id,))
             total_flats = cursor.fetchone()[0]
-        except sqlite3.Error as e:
+        except psycopg2.Error as e:
             self.logger.error(f"Database error when counting flats for city '{self.city_name}': {e}")
             return 0
         except Exception as e:
