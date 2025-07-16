@@ -2,7 +2,7 @@ import pandas as pd
 import sqlite3
 
 def save_to_csv():
-    conn = sqlite3.connect('otodom.db')
+    conn = sqlite3.connect('databases/otodom.db')
     cursor = conn.cursor()
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
     tables_names = cursor.fetchall()

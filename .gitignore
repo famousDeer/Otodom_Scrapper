@@ -3,3 +3,5 @@
 .env
 *.csv
 /database/
+*.html
+.DS_Store
