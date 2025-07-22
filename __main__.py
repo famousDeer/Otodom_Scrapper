@@ -8,7 +8,7 @@ from utils.visualize_data import Visualization
 from utils.save_to_csv import save_to_csv
 from time import gmtime, strftime
 
-def setup_logger(name="app_logger"):
+def setup_logger(name="app_logger", city=None):
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 
@@ -23,7 +23,7 @@ def setup_logger(name="app_logger"):
     console_handler.setFormatter(log_format)
 
     # File handler with rotation (max 5MB, 3 backups)
-    log_filename = "logs/"+strftime("%Y-%m-%d_%H-%M-%S", gmtime())+" | app.log"
+    log_filename = "logs/"+strftime("%Y-%m-%d_%H-%M-%S", gmtime())+"| "+city+" |app.log"
     file_handler = RotatingFileHandler(log_filename, maxBytes=5*1024*1024, backupCount=3)
     file_handler.setFormatter(log_format)
 
@@ -33,8 +33,6 @@ def setup_logger(name="app_logger"):
     return logger
 
 def main():
-    # Setup logger
-    logger = setup_logger()
     
     parser = argparse.ArgumentParser(description="Run the Otodom data scraper and analysis tool.")
     parser.add_argument('--scrape', action='store_true', help="Run the web scraper to collect data from Otodom.")
@@ -45,7 +43,8 @@ def main():
     parser.add_argument('--save', action='store_true', help="Save the data to a CSV file.")
     parser.add_argument('--darkmode', action='store_true', help="Use dark mode for visualizations.")
     args = parser.parse_args()
-    
+    # Setup logger
+    logger = setup_logger(city=args.city)
     logger.info(f"Starting application with arguments: {vars(args)}")
     
     if args.scrape:
