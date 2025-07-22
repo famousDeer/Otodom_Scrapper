@@ -329,7 +329,7 @@ class OtodomScraper:
             None: If extraction fails
         '''
         try:
-            price_text = article.find_next("div", {'data-sentry-component': 'Price'})
+            price_text = article.find_next("span", {'data-sentry-element': 'MainPrice'})
             if not price_text:
                 self.logger.error("Missing price_text in property extraction")
                 return None
