@@ -19,7 +19,7 @@ def setup_logger(name="app_logger"):
     console_handler.setFormatter(log_format)
 
     # File handler with rotation (max 5MB, 3 backups)
-    file_handler = RotatingFileHandler("logs/"+strftime("%Y-%m-%d %H:%M:%S", gmtime())+" | app.log", maxBytes=5*1024*1024, backupCount=3)
+    file_handler = RotatingFileHandler("logs/"+strftime("%Y-%m-%d_%H-%M-%S", gmtime())+" | app.log", maxBytes=5*1024*1024, backupCount=3)
     file_handler.setFormatter(log_format)
 
     logger.addHandler(console_handler)
