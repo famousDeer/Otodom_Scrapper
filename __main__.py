@@ -8,7 +8,7 @@ from utils.visualize_data import Visualization
 from utils.save_to_csv import save_to_csv
 from time import gmtime, strftime
 
-def setup_logger(name="app_logger", city=None):
+def setup_logger(name="app_logger", city=''):
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
 

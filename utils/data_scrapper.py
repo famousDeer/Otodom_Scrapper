@@ -18,7 +18,7 @@ class OtodomScraper:
                  max_area, 
                  setup_logger: Optional[logging.Logger] = None,
                  city: Optional[str] = None):
-        self.logger = setup_logger(__name__)
+        self.logger = setup_logger(name=__name__, city=city+" Scraper")
         self.user_input = input("Write the city name: ") if city is None else city
         self.city_name, self.city_district, self.vojevodian = self.__get_place_details(self.user_input)
         self.city_name = self.__convert_to_ascii(self.city_name)
