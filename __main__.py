@@ -17,13 +17,17 @@ def setup_logger(name="app_logger", city=''):
 
     # Ensure logs directory exists
     os.makedirs("logs", exist_ok=True)
+    # Create a subdirectory inside logs/ with today's date (Y-m-d)
+    today_dir = strftime("%Y-%m-%d", gmtime())
+    log_subdir = os.path.join("logs", today_dir)
+    os.makedirs(log_subdir, exist_ok=True)
 
     # Console handler
     console_handler = logging.StreamHandler()
     console_handler.setFormatter(log_format)
 
     # File handler with rotation (max 5MB, 3 backups)
-    log_filename = "logs/"+strftime("%Y-%m-%d_%H-%M-%S", gmtime())+"| "+city+" |app.log"
+    log_filename = log_subdir+"/"+strftime("%Y-%m-%d_%H-%M-%S", gmtime())+"| "+city+" |app.log"
     file_handler = RotatingFileHandler(log_filename, maxBytes=5*1024*1024, backupCount=3)
     file_handler.setFormatter(log_format)
 
