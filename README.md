@@ -1,112 +1,61 @@
-# Apartment Prices data
+# Otodom Scraper
 
-A Python application for scraping and visualizing apartment prices from Otodom.pl. This tool helps analyze real estate prices across different cities in Poland, providing insights through various data visualizations. User provide city name which he want to analyze, then data scrapper script will download available information depend on the user restrictions.
+Python scraper for apartment listings from Otodom.pl. Results are stored in PostgreSQL using a relational schema that tracks daily scrapes per city. The scraper uses multithreading to speed up I/O-bound work and prevents duplicates by link.
 
 ## Features
+- Multithreaded scraping (ThreadPoolExecutor)
+- PostgreSQL storage with relational schema:
+  - cities (unique city names)
+  - scrapes (one row per city per run day)
+  - flats (listings linked to a scrape)
+- Duplicate prevention via UNIQUE(link) + ON CONFLICT DO NOTHING
+- Rotating logs
+- Optional daily scheduling via cron inside Docker
 
-- Web scraping of apartment listings from Otodom.pl
-- Data storage in SQLite database
-- Comprehensive data visualization including:
-  - Price per square meter distribution
-  - Surface area distribution
-  - Price correlation with location
-  - Rental prices analysis
-  - Statistical analysis by location
-  - Price variation coefficient analysis
+## Tech Stack
+- Python 3.11
+- requests, BeautifulSoup, geopy, unidecode
+- psycopg2 (PostgreSQL)
+- Docker + Docker Compose (work in progress)
 
-## Requirements
+## Database Schema
+<img src="Database.png">
 
-- Python 3.x
-- Required Python packages (listed in requirements.txt)
-
-## Installation
-
-1. Clone the repository:
+## Running locally (Python on host)
+1) Start DB in Docker:
 ```bash
-git clone <repository-url>
-cd CenyMieszkan
+docker compose up -d db
 ```
 
-2. Install required packages:
+2) Install deps locally:
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --no-cache-dir -r requirements.txt
 ```
 
-## Usage
+3) Use the scraper programmatically:
+```python
+from utils.data_scrapper import OtodomScraper
+import logging
 
-### 1. Data Collection
+def setup_logger(name="scraper", city=""):
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        ch = logging.StreamHandler()
+        ch.setFormatter(logging.Formatter('%(threadName)s | %(asctime)s | [%(levelname)s] -> %(message)s'))
+        logger.addHandler(ch)
+    return logger
 
-Run the scraper to collect apartment data:
-```bash
-python data_scrapper.py
-```
-- Enter the city name when prompted
-- The script will collect data for apartments between 50-100m²
-- If there is a lot of apartments Otodom will block scrapper for around 5 min. In this case program will wait 5 min and try again. It is using multithreading to speed up :).
-- Data is saved to a SQLite database (otodom.db)
-- Log file will also be provide as well with terminal information logging
-
-### 2. Data Visualization
-
-To visualize the collected data:
-```bash
-python visualize_data.py
+scraper = OtodomScraper(min_area=50, max_area=100, setup_logger=setup_logger, city="Gdańsk")
+count = scraper.parse_data()
+print("Inserted listings:", count)
 ```
 
-First user will be asked to choose from available cities. List of the cities will be listed on terminal.
+By default the code connects to PostgreSQL at host localhost.
 
-This will generate several visualizations:
-- Surface area distribution
-- Price per square meter distribution
-- Surface vs. Total price correlation
-- Number of listings per address
-- Price per square meter by number of rooms
-- Price analysis by location
-- Rent price analysis
-- Statistical variations and ranges
-
-## Visualizations Description
-
-1. **Surface Distribution**: Shows the distribution of apartment sizes
-2. **Price per Meter Distribution**: Displays the spread of prices per square meter
-3. **Surface vs Price**: Correlation between apartment size and total price
-4. **Listings per Address**: Shows which locations have the most listings
-5. **Price per Meter by Rooms**: Box plots showing price variations based on number of rooms
-6. **Location Analysis**: Various graphs showing price statistics by location
-7. **Coefficient of Variation**: Shows price variability in different locations
-8. **Price Range Analysis**: Displays the interquartile range of prices by location
-
-## Data Structure
-
-The collected data includes:
-- Title
-- Address
-- Link to offer
-- Number of rooms
-- Surface area
-- Price per square meter
-- Total price
-- Rent price (if available, if not it is 0)
-
-## Error Handling
-
-The application includes:
-- Robust error handling for web scraping
-- Logging system with rotation
-- Duplicate entry prevention
-- Database connection management
-
-## Limitations
-
-- Only works with Polish cities
-- Limited to Otodom.pl listings apartments for sale
-- Focuses on apartments between 50-100m²
-- Subject to website structure changes
-
-## Contributing
-
-Feel free to submit issues and enhancement requests!
-
+## Cron (optional)
+The Docker image includes cron so you can schedule daily runs (e.g., 07:00).
 ## License
-
-MIT-License
+MIT
